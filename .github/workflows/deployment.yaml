@@ -147,22 +147,40 @@ jobs:
 
           linux_archive=kanade-tts-linux-x86_64.tar.gz
           macos_archive=kanade-tts-macos-arm64.tar.gz
-          printf '%s\n' "$linux_archive" "$macos_archive" \
+          printf '%s\n' "dist/$linux_archive" "dist/$macos_archive" \
             | sort \
-            | diff -u - <(find dist -maxdepth 1 -type f -exec basename {} \; | sort)
+            | diff -u - <(find dist -mindepth 1 -print | sort)
 
           verify_dir=$(mktemp -d)
           trap 'rm -rf "$verify_dir"' EXIT
           for archive_name in "$linux_archive" "$macos_archive"; do
             artifact_name=${archive_name%.tar.gz}
             archive="dist/$archive_name"
-            printf '%s\n' \
-              "$artifact_name/" \
-              "$artifact_name/README.md" \
-              "$artifact_name/THIRD_PARTY_NOTICES.md" \
-              "$artifact_name/kanade-tts" \
-              | sort \
-              | diff -u - <(tar -tzf "$archive" | sort)
+            python3 - "$archive" "$artifact_name" <<'PY'
+          import sys
+          import tarfile
+
+          archive, artifact = sys.argv[1:]
+          expected = {
+              artifact: "dir",
+              f"{artifact}/README.md": "file",
+              f"{artifact}/THIRD_PARTY_NOTICES.md": "file",
+              f"{artifact}/kanade-tts": "executable",
+          }
+          with tarfile.open(archive, "r:gz") as package:
+              members = package.getmembers()
+          names = sorted(member.name for member in members)
+          if names != sorted(expected):
+              raise SystemExit(f"unexpected archive members in {archive}: {names!r}")
+          for member in members:
+              kind = expected[member.name]
+              if kind == "dir" and not member.isdir():
+                  raise SystemExit(f"archive member is not a directory: {member.name}")
+              if kind != "dir" and not member.isreg():
+                  raise SystemExit(f"archive member is not a regular file: {member.name}")
+              if kind == "executable" and member.mode & 0o111 == 0:
+                  raise SystemExit(f"archive member is not executable: {member.name}")
+          PY
             tar -xOf "$archive" "$artifact_name/kanade-tts" > "$verify_dir/$artifact_name"
             test -s "$verify_dir/$artifact_name"
           done
