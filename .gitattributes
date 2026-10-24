@@ -1,1 +1,2 @@
 /config/*.json text eol=lf
+/templates/*.tmpl text eol=lf
