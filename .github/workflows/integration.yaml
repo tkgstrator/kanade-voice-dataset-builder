@@ -17,7 +17,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        include:
+          - os: ubuntu-24.04
+            runner_os: Linux
+            runner_arch: X64
+            rust_host: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            runner_os: Linux
+            runner_arch: ARM64
+            rust_host: aarch64-unknown-linux-gnu
+          - os: macos-15
+            runner_os: macOS
+            runner_arch: ARM64
+            rust_host: aarch64-apple-darwin
+          - os: windows-2025
+            runner_os: Windows
+            runner_arch: X64
+            rust_host: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -29,12 +45,24 @@ jobs:
       - name: Install audio tools on macOS
         if: runner.os == 'macOS'
         run: brew install ffmpeg
+      - name: Install audio tools on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ffmpeg --no-progress --yes
       - name: Toolchain and audio tool evidence
+        shell: bash
+        env:
+          EXPECTED_OS: ${{ matrix.runner_os }}
+          EXPECTED_ARCH: ${{ matrix.runner_arch }}
+          EXPECTED_HOST: ${{ matrix.rust_host }}
         run: |
-          uname -m
+          set -euo pipefail
+          test "$RUNNER_OS" = "$EXPECTED_OS"
+          test "$RUNNER_ARCH" = "$EXPECTED_ARCH"
           rustc -vV
-          ffmpeg -version | head -n 1
-          ffprobe -version | head -n 1
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "$EXPECTED_HOST"
+          ffmpeg -version | sed -n '1p'
+          ffprobe -version | sed -n '1p'
       - name: Format
         run: cargo fmt --all -- --check
       - name: Strict Clippy
