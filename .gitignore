@@ -113,3 +113,7 @@ $RECYCLE.BIN/
 /generated/
 /generated-audio/
 /generated-dataset/
+
+# Local agent configuration and credentials
+/.claude/
+/.codex/

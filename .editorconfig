@@ -1,0 +1,36 @@
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+max_line_length = 100
+
+[*.rs]
+indent_size = 4
+max_line_length = 100
+
+[*.{sh,bash,zsh,fish}]
+indent_size = 2
+max_line_length = 100
+
+[*.{yml,yaml,toml,ini,cfg,conf,properties}]
+indent_size = 2
+
+[*.{json,jsonc,json5}]
+indent_size = 2
+quote_type = double
+
+[*.{md,mdx,markdown}]
+trim_trailing_whitespace = false
+max_line_length = off
+
+[{Dockerfile,Dockerfile.*,*.dockerfile,Containerfile}]
+indent_size = 2
+
+[{package-lock.json,pnpm-lock.yaml,yarn.lock,bun.lock,bun.lockb,uv.lock,poetry.lock,Cargo.lock,Package.resolved,composer.lock}]
+insert_final_newline = false
+trim_trailing_whitespace = false
