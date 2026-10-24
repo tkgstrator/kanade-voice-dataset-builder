@@ -1,0 +1,17 @@
+pub mod audio;
+pub mod build;
+pub mod cli;
+pub mod error;
+pub(crate) mod finder;
+pub mod inventory;
+pub mod join;
+pub mod manifest;
+pub mod model;
+pub mod paths;
+pub mod probe;
+pub mod readme;
+pub mod review;
+pub mod scenario;
+pub mod speakers;
+pub mod text;
+pub mod verify;

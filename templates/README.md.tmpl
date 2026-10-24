@@ -1,0 +1,113 @@
+---
+pretty_name: KANADE Japanese Voice Dataset
+license: other
+task_categories:
+  - automatic-speech-recognition
+  - text-to-speech
+language:
+  - ja
+tags:
+  - audio
+  - voice
+  - speech
+  - KANADE
+size_categories:
+  - {{SIZE_CATEGORY}}
+---
+
+# KANADE — Japanese Voice Lines
+
+A private AudioFolder dataset of Japanese voice audio and matched text extracted from KANADE. The original game and performances belong to their rights holders.
+
+## Dataset Summary
+
+| Field | Value |
+| --- | --- |
+| Game | KANADE |
+| Audio language | Japanese (ja) only |
+| Accepted utterances | {{ACCEPTED_COUNT}} |
+| Verified audio duration | {{DURATION_SECONDS}} seconds |
+| Speakers with accepted audio | {{SPEAKER_COUNT}} |
+| Physical source OGGs | {{PHYSICAL_COUNT}} |
+| Rejected records | {{REJECTED_COUNT}} |
+| Orphan OGGs | {{ORPHAN_COUNT}} |
+| Distribution format | AudioFolder metadata plus mono PCM WAV |
+
+## Directory Layout
+
+```text
+audio/<speaker_id>/<voice_id>.wav
+metadata.csv
+speakers.json
+manifests/accepted.jsonl
+reports/rejected.jsonl
+reports/orphan-audio.jsonl
+reports/missing-audio.jsonl
+reports/manual-review.jsonl
+report.json
+```
+
+## Loading
+
+From the directory containing the finalized `KANADE-v1` folder, load the local AudioFolder:
+
+```python
+from datasets import load_dataset
+
+local = load_dataset("audiofolder", data_dir="KANADE-v1", split="train")
+sample = local[0]
+print(sample["audio"], sample["transcription"], sample["speaker"])
+```
+
+The Hub repository is private. Authenticate with a token authorized for `ultemica/kanade-voices` before loading:
+
+```python
+from datasets import load_dataset
+
+hub = load_dataset("ultemica/kanade-voices", split="train", token=True)
+sample = hub[0]
+print(sample["audio"], sample["transcription"], sample["speaker"])
+```
+
+`metadata.csv` uses AudioFolder's relative `file_name` linking column, plus `transcription`, `speaker`, `speaker_id`, `utterance_id`, `voice_id`, `source_scn`, `scenario_event_index`, `display_text`, and `quality_flags`. AudioFolder exposes the linked WAV as the `audio` feature in loaded rows.
+
+## Schema
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `file_name` in `metadata.csv` | string | Relative link to the verified WAV; AudioFolder loads it as `audio` |
+| `audio` in a loaded row | Audio feature | Decoded or decodable verified WAV |
+| `transcription` | string | Normalized Japanese spoken text |
+| `speaker` / `speaker_id` | string | Source speaker name and canonical ID |
+| `utterance_id` / `voice_id` | string | Stable accepted row and source voice IDs |
+| `display_text` | string | Japanese display text before spoken-text normalization |
+| `quality_flags` | string | Semicolon-separated review cues; empty when none |
+
+The accepted JSONL manifest also preserves raw Japanese text, source observations, audio hashes, and verified duration.
+
+## Intended Use
+
+This private copy is for research and educational, noncommercial work on Japanese ASR, TTS, and speech analysis. It is not a grant of rights to the game audio or text.
+
+## Data Source & Extraction
+
+The source is the KANADE game data. Voice OGGs were matched to Japanese scenario text through exact source IDs and speaker metadata, converted to mono PCM WAV, and independently checked against the source before this Card was rendered. See the [official KANADE site](https://kanade.frontwing.co.jp/) and the [Nintendo Switch listing](https://www.nintendo.com/us/store/products/kanade-switch/).
+
+## Limitations and Quality Policy
+
+This private dataset contains Japanese audio only. Frontwing states that game text supports Japanese, English, Simplified Chinese, and Traditional Chinese; the protagonist is excluded from full voice. The presence of those text languages does not imply translated audio in this dataset. Ambiguous joins, unsupported markup, and invalid audio are rejected and accounted for in reports. Manual sample decisions bind to a digest of the accepted row, including the WAV hash and text, so changed evidence requires a new decision. Accepted audio is not guaranteed free of performance effects, music, or transcription mistakes.
+
+## License & Copyright
+
+Original assets are ©Frontwing / GOOD SMILE COMPANY. `license: other` records that this dataset does not carry an open-content license. It is kept private for research and educational noncommercial use. We will respond promptly to a takedown request from the rights holders through the hosting platform's normal channels.
+
+## Citation
+
+```bibtex
+@misc{kanade_voices,
+  title = {KANADE Japanese Voice Dataset},
+  author = {ultemica},
+  note = {Private research dataset; original assets ©Frontwing / GOOD SMILE COMPANY},
+  howpublished = {https://huggingface.co/datasets/ultemica/kanade-voices}
+}
+```

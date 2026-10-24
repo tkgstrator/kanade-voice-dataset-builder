@@ -1,0 +1,8 @@
+{
+  "name": "kanade-voice-dataset-builder",
+  "dockerComposeFile": "compose.yaml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "ubuntu",
+  "postCreateCommand": ".devcontainer/postCreateCommand.sh"
+}

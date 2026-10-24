@@ -1,0 +1,12 @@
+{
+  "schema_version": "kanade-scenario-locale-v2",
+  "source_files": [
+    {"path": "main/default.tjs", "sha256": "0b82ffaf96aa3f3bd37fbb9434d98a31068219fa102f89c6b8b10cbb7f912a72"},
+    {"path": "system/StorageData.tjs", "sha256": "4bbd09c79610557afbd6bc14f65a3c2d052843779f355e2416a0518c2c5a5b98"},
+    {"path": "system/MainWindow.tjs", "sha256": "2753db2340a6058e666fcc5452124169ef8ec9edb69e7142e16e6587a4ce4466"},
+    {"path": "sysscn/multilang.tjs", "sha256": "79dde5c441a03b8981c1ad5c241b216298093a4ed662f99dfa20800c156fb035"}
+  ],
+  "base_tag": "jp",
+  "runtime_base_index": 0,
+  "tags": ["jp", "en", "cn", "tw"]
+}
