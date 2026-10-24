@@ -56,6 +56,7 @@ pub struct NormalizedText {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoiceAsset {
+    #[serde(serialize_with = "crate::paths::serialize_relative_path")]
     pub source_ogg: PathBuf,
     pub voice_id: String,
     pub source_speaker: String,
@@ -91,12 +92,14 @@ pub struct AcceptedUtterance {
     pub voice_id: String,
     pub speaker_id: String,
     pub speaker_name: String,
+    #[serde(serialize_with = "crate::paths::serialize_relative_path")]
     pub source_ogg: PathBuf,
     pub source_scn: String,
     pub scenario_event_index: usize,
     pub primary_source_event: SourceEventRef,
     pub source_events: Vec<SourceEventRef>,
     pub source_observations: Vec<SourceObservation>,
+    #[serde(serialize_with = "crate::paths::serialize_relative_path")]
     pub audio_path: PathBuf,
     pub raw_text: String,
     pub display_text: String,
@@ -118,6 +121,7 @@ pub struct AcceptedUtterance {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RejectedUtterance {
     pub voice_id: Option<String>,
+    #[serde(serialize_with = "crate::paths::serialize_optional_relative_path")]
     pub source_ogg: Option<PathBuf>,
     pub source_events: Vec<SourceEventRef>,
     pub source_observations: Vec<SourceObservation>,

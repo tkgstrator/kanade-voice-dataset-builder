@@ -1,6 +1,7 @@
 use clap::Parser;
 use kanade_tts::cli::{Cli, Command};
 use kanade_tts::inventory::{inventory_voice_root, normalize_voice_id};
+#[cfg(unix)]
 use kanade_tts::probe::probe_audio;
 use kanade_tts::speakers::build_speaker_catalog;
 use std::collections::BTreeSet;

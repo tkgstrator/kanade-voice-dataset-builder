@@ -1,11 +1,12 @@
 use crate::audio::{AudioConfig, CONVERSION_SETTINGS, convert_one, sha256_file};
+use crate::durable::{sync_directory, sync_existing_file};
 use crate::error::{Error, Result};
 use crate::finder;
 use crate::inventory::{VoiceInventory, inventory_voice_root};
 use crate::join::{JoinInput, join_candidates};
 use crate::manifest::{write_final_manifests, write_join_diagnostics};
 use crate::model::{AcceptedUtterance, RejectedUtterance, ScenarioTextEntry, VoiceAsset};
-use crate::paths::DatasetPaths;
+use crate::paths::{DatasetPaths, portable_relative};
 use crate::readme::render_dataset_card;
 use crate::review::check_manual_review_rows;
 use crate::scenario::{
@@ -20,9 +21,11 @@ use crate::verify::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::{ffi::CString, os::unix::ffi::OsStrExt};
 use walkdir::WalkDir;
@@ -45,6 +48,12 @@ unsafe extern "C" {
         new_path: *const std::ffi::c_char,
         flags: u32,
     ) -> std::ffi::c_int;
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn MoveFileExW(existing: *const u16, replacement: *const u16, flags: u32) -> i32;
 }
 
 #[derive(Clone, Debug)]
@@ -133,7 +142,27 @@ pub(crate) fn promote_noreplace(source: &Path, destination: &Path) -> Result<()>
         }
         Ok(())
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        // Omit MOVEFILE_REPLACE_EXISTING and MOVEFILE_COPY_ALLOWED: the move
+        // must neither overwrite a destination nor cross a volume by copying.
+        const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
+        let wide = |path: &Path| -> Result<Vec<u16>> {
+            let mut units: Vec<_> = path.as_os_str().encode_wide().collect();
+            if units.contains(&0) {
+                return Err(Error::Manifest("NUL in promotion path".into()));
+            }
+            units.push(0);
+            Ok(units)
+        };
+        let from = wide(source)?;
+        let to = wide(destination)?;
+        if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 {
+            return Err(io(destination, std::io::Error::last_os_error()));
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = (source, destination);
         Err(Error::Manifest(
@@ -235,19 +264,19 @@ pub(crate) fn read_source_with_mode(
         include_bytes!("../config/line-structure-fingerprints.json"),
     );
     for asset in &inventory.assets {
-        hash.update(asset.source_ogg.to_string_lossy().as_bytes());
+        hash.update(portable_relative(&asset.source_ogg)?.as_bytes());
         hash.update(asset.byte_size.to_le_bytes());
         hash.update(asset.source_sha256.as_bytes());
     }
     for sidecar in &inventory.sidecars {
-        hash.update(sidecar.to_string_lossy().as_bytes());
+        hash.update(portable_relative(sidecar)?.as_bytes());
         hash.update(sha256_file(&voice_root.join(sidecar))?.as_bytes());
     }
     for path in scenarios {
         let relative = path
             .strip_prefix(&root)
             .map_err(|_| Error::Manifest("scenario path escapes source".into()))?;
-        hash.update(relative.to_string_lossy().as_bytes());
+        hash.update(portable_relative(relative)?.as_bytes());
         hash.update(sha256_file(&path)?.as_bytes());
         let psb = load_psb_root(&path)?;
         entries.extend(
@@ -416,15 +445,11 @@ struct PublicationFile {
 }
 
 fn allowed_file(relative: &Path) -> bool {
-    if relative
-        .components()
-        .any(|component| !matches!(component, Component::Normal(_)))
-    {
+    let Ok(text) = portable_relative(relative) else {
         return false;
-    }
-    let text = relative.to_string_lossy();
+    };
     matches!(
-        text.as_ref(),
+        text.as_str(),
         "metadata.csv"
             | "speakers.json"
             | "report.json"
@@ -462,8 +487,8 @@ pub(crate) fn publication_files(root: &Path) -> Result<Vec<(String, u64, String)
                 .path()
                 .strip_prefix(root)
                 .map_err(|_| Error::Manifest("publication escape".into()))?;
-            let text = relative.to_string_lossy();
-            let allowed = matches!(text.as_ref(), "audio" | "manifests" | "reports")
+            let text = portable_relative(relative)?;
+            let allowed = matches!(text.as_str(), "audio" | "manifests" | "reports")
                 || (relative.components().count() == 2 && text.starts_with("audio/"));
             if !allowed {
                 return Err(Error::Manifest(format!(
@@ -489,7 +514,7 @@ pub(crate) fn publication_files(root: &Path) -> Result<Vec<(String, u64, String)
             )));
         }
         files.push((
-            rel.to_string_lossy().into_owned(),
+            portable_relative(rel)?,
             entry.metadata()?.len(),
             sha256_file(entry.path())?,
         ));
@@ -557,13 +582,9 @@ fn write_seal_once(path: &Path, bytes: &[u8]) -> Result<()> {
         }
         result?;
     }
-    File::open(&temporary)
-        .and_then(|file| file.sync_all())
-        .map_err(|source| io(&temporary, source))?;
+    sync_existing_file(&temporary).map_err(|source| io(&temporary, source))?;
     fs::rename(&temporary, path).map_err(|source| io(path, source))?;
-    File::open(path.parent().expect("seal has parent"))
-        .and_then(|file| file.sync_all())
-        .map_err(|source| io(path, source))?;
+    sync_directory(path.parent().expect("seal has parent")).map_err(|source| io(path, source))?;
     Ok(())
 }
 
@@ -658,14 +679,16 @@ fn finalize_dataset_inner(config: &BuildConfig, mode: ScenarioStructureMode) -> 
     }
     for entry in WalkDir::new(&work).follow_links(false).contents_first(true) {
         let entry = entry?;
-        File::open(entry.path())
-            .and_then(|file| file.sync_all())
-            .map_err(|source| io(entry.path(), source))?;
+        let result = if entry.file_type().is_dir() {
+            sync_directory(entry.path())
+        } else {
+            sync_existing_file(entry.path())
+        };
+        result.map_err(|source| io(entry.path(), source))?;
     }
     finder::ensure_absent(&work)?;
     promote_noreplace(&work, &config.final_root)?;
-    File::open(config.final_root.parent().expect("final root has parent"))
-        .and_then(|file| file.sync_all())
+    sync_directory(config.final_root.parent().expect("final root has parent"))
         .map_err(|source| io(&config.final_root, source))?;
     Ok(())
 }
@@ -673,13 +696,27 @@ fn finalize_dataset_inner(config: &BuildConfig, mode: ScenarioStructureMode) -> 
 #[cfg(test)]
 mod tests {
     use super::{
-        promote_noreplace, publication_files, read_source, review_sample_ids, source_config_hasher,
+        allowed_file, promote_noreplace, publication_files, read_source, review_sample_ids,
+        source_config_hasher,
     };
     use crate::join::JoinReport;
     use crate::manifest::write_join_diagnostics;
     use sha2::Digest;
     use std::collections::BTreeMap;
     use std::fs;
+
+    #[test]
+    fn publication_allowlist_accepts_native_nested_paths() {
+        let accepted = std::path::PathBuf::from("audio")
+            .join("speaker")
+            .join("voice.wav");
+        let manifest = std::path::PathBuf::from("manifests").join("accepted.jsonl");
+        assert!(allowed_file(&accepted));
+        assert!(allowed_file(&manifest));
+        assert!(!allowed_file(
+            &std::path::PathBuf::from("other").join("voice.wav")
+        ));
+    }
 
     #[test]
     fn line_structure_config_drift_changes_source_fingerprint() {
@@ -789,6 +826,20 @@ mod tests {
             .map(std::path::PathBuf::from)
             .expect("KANADE_SOURCE_ROOT must point to lawfully extracted romfs/data");
         read_source(&source).unwrap();
+    }
+
+    #[test]
+    fn atomic_promotion_moves_to_a_new_destination() {
+        let base = std::env::temp_dir().join(format!("kanade-promote-new-{}", std::process::id()));
+        fs::create_dir(&base).unwrap();
+        let source = base.join("work");
+        let destination = base.join("final");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("payload"), b"work").unwrap();
+        promote_noreplace(&source, &destination).unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(destination.join("payload")).unwrap(), b"work");
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

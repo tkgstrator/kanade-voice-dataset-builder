@@ -1,14 +1,15 @@
 use crate::audio::sha256_file;
 use crate::build::{BuildReport, DatasetReport};
+use crate::durable::sync_directory;
 use crate::error::{Error, Result};
 use crate::finder;
 use crate::join::JoinReport;
 use crate::model::{AcceptedUtterance, quality_flags_cell};
-use crate::paths::DatasetPaths;
+use crate::paths::{DatasetPaths, portable_relative};
 use crate::probe::probe_canonical_wav;
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path};
 
@@ -67,8 +68,9 @@ pub fn render_final_manifests(rows: &[AcceptedUtterance]) -> Result<FinalManifes
     ])?;
     for row in rows {
         let flags = quality_flags_cell(&row.quality_flags);
+        let file_name = portable_relative(&row.audio_path)?;
         writer.write_record([
-            row.audio_path.to_string_lossy().as_ref(),
+            &file_name,
             &row.spoken_text,
             &row.speaker_name,
             &row.speaker_id,
@@ -135,8 +137,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         file.flush().map_err(|e| io(&temporary, e))?;
         file.sync_all().map_err(|e| io(&temporary, e))?;
         fs::rename(&temporary, path).map_err(|e| io(path, e))?;
-        File::open(path.parent().expect("output has parent"))
-            .and_then(|dir| dir.sync_all())
+        sync_directory(path.parent().expect("output has parent"))
             .map_err(|e| io(path.parent().expect("output has parent"), e))
     })();
     if result.is_err() {
@@ -361,11 +362,15 @@ pub fn write_join_diagnostics(report: &JoinReport, root: &Path) -> Result<()> {
             .map_err(|e| Error::Manifest(e.to_string()))?;
         let reason =
             serde_json::to_string(&row.reason_code).map_err(|e| Error::Manifest(e.to_string()))?;
+        let source_ogg = row
+            .source_ogg
+            .as_ref()
+            .map(|path| portable_relative(path))
+            .transpose()?
+            .unwrap_or_default();
         csv_writer.write_record([
             row.voice_id.as_deref().unwrap_or(""),
-            &row.source_ogg
-                .as_ref()
-                .map_or_else(String::new, |p| p.to_string_lossy().into_owned()),
+            &source_ogg,
             &events,
             &observations,
             &row.stage,

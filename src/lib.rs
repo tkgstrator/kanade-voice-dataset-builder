@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod build;
 pub mod cli;
+mod durable;
 pub mod error;
 pub(crate) mod finder;
 pub mod inventory;

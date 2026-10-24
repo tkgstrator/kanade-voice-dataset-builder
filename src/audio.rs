@@ -1,3 +1,4 @@
+use crate::durable::{sync_directory, sync_existing_file};
 use crate::error::{Error, Result};
 use crate::model::{AcceptedUtterance, MatchedUtterance};
 use crate::paths::DatasetPaths;
@@ -265,12 +266,10 @@ pub fn convert_one(config: &AudioConfig, item: &MatchedUtterance) -> Result<Acce
             }
             let duration = verified_wav(&config.ffprobe, &temporary)?;
             let hash = sha256_file(&temporary)?;
-            File::open(&temporary)
-                .and_then(|f| f.sync_all())
-                .map_err(|source| Error::Io {
-                    path: temporary.clone(),
-                    source,
-                })?;
+            sync_existing_file(&temporary).map_err(|source| Error::Io {
+                path: temporary.clone(),
+                source,
+            })?;
             regular_or_absent(&output)?;
             fs::rename(&temporary, &output).map_err(|source| Error::Io {
                 path: output.clone(),
@@ -294,12 +293,10 @@ pub fn convert_one(config: &AudioConfig, item: &MatchedUtterance) -> Result<Acce
                 path: state_file.clone(),
                 source,
             })?;
-            File::open(parent)
-                .and_then(|f| f.sync_all())
-                .map_err(|source| Error::Io {
-                    path: parent.into(),
-                    source,
-                })?;
+            sync_directory(parent).map_err(|source| Error::Io {
+                path: parent.into(),
+                source,
+            })?;
             Ok((duration, hash))
         })();
         if result.is_err() {

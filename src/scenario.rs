@@ -2,6 +2,7 @@ use crate::{
     error::{Error, Result},
     inventory::{VoiceInventory, normalize_voice_id},
     model::{RejectReason, ScenarioTextEntry, SourceEventRef, VoiceMeta, quality_flags_cell},
+    paths::portable_relative,
     speakers::{SpeakerAliases, build_speaker_catalog, resolve_speaker},
     text::{NormalizationRules, normalize_text},
 };
@@ -724,6 +725,11 @@ fn extract_scenario_texts_inner(
     map: &LocaleMap,
     mode: ScenarioStructureMode,
 ) -> Result<Vec<ScenarioTextEntry>> {
+    let source_scn = if source.is_absolute() {
+        source.to_string_lossy().into_owned()
+    } else {
+        portable_relative(source)?
+    };
     let root = object(root, "root")?;
     let name = string(
         root.get("name")
@@ -1001,7 +1007,7 @@ fn extract_scenario_texts_inner(
             };
             entries.push(ScenarioTextEntry {
                 source_event: SourceEventRef {
-                    source_scn: source.to_string_lossy().into_owned(),
+                    source_scn: source_scn.clone(),
                     scenario_event_index: entries.len(),
                     scene_index,
                     scene_text_index,
@@ -1132,7 +1138,8 @@ pub fn write_pilot_table(
                 .map(|normalized| quality_flags_cell(&normalized.quality_flags))
                 .unwrap_or_default();
             let source_ogg = matches
-                .map(|asset| asset.source_ogg.to_string_lossy().into_owned())
+                .map(|asset| portable_relative(&asset.source_ogg))
+                .transpose()?
                 .unwrap_or_default();
             writer.write_record([
                 entry.source_event.source_scn.as_str(),

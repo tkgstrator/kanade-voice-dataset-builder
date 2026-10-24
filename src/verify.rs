@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::finder;
 use crate::manifest::render_final_manifests;
 use crate::model::{AcceptedUtterance, RejectedUtterance, SourceEventRef, VoiceAsset};
-use crate::paths::DatasetPaths;
+use crate::paths::{DatasetPaths, portable_relative};
 use crate::probe::{probe_audio, probe_canonical_wav};
 use crate::scenario::ScenarioStructureMode;
 use serde::Deserialize;
@@ -159,7 +159,9 @@ fn verify_rejected_csv(path: &Path, rows: &[RejectedUtterance]) -> Result<()> {
         let source = row
             .source_ogg
             .as_ref()
-            .map_or_else(String::new, |path| path.to_string_lossy().into_owned());
+            .map(|path| portable_relative(path))
+            .transpose()?
+            .unwrap_or_default();
         if record.iter().collect::<Vec<_>>()
             != [
                 row.voice_id.as_deref().unwrap_or(""),

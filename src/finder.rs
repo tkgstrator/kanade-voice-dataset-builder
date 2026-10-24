@@ -1,9 +1,11 @@
 use crate::build::promote_noreplace;
+use crate::durable::sync_directory;
 use crate::error::{Error, Result};
+use crate::paths::portable_relative;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -67,7 +69,10 @@ pub(crate) fn recognized_at(root: &Path, path: &Path, marked_unsealed: bool) -> 
     let relative = path
         .strip_prefix(root)
         .map_err(|_| Error::Manifest("Finder sidecar outside work root".into()))?;
-    if !matches!(relative.to_str(), Some(".DS_Store" | "audio/.DS_Store")) {
+    if !matches!(
+        portable_relative(relative)?.as_str(),
+        ".DS_Store" | "audio/.DS_Store"
+    ) {
         return Ok(false);
     }
     if !marked_unsealed {
@@ -152,8 +157,7 @@ fn write_plan_once(path: &Path, bytes: &[u8]) -> Result<()> {
             .map_err(|source| io(&temporary, source))?;
     }
     promote_noreplace(&temporary, path)?;
-    File::open(path.parent().expect("quarantine plan has parent"))
-        .and_then(|dir| dir.sync_all())
+    sync_directory(path.parent().expect("quarantine plan has parent"))
         .map_err(|source| io(path, source))
 }
 
@@ -171,9 +175,8 @@ pub(crate) fn quarantine(work: &Path, fingerprint: &str) -> Result<()> {
         if existing_file(&source)? {
             let relative = source
                 .strip_prefix(work)
-                .map_err(|_| Error::Manifest("sidecar escapes work".into()))?
-                .to_string_lossy()
-                .into_owned();
+                .map_err(|_| Error::Manifest("sidecar escapes work".into()))?;
+            let relative = portable_relative(relative)?;
             source_evidence.insert(relative, inspect(&source)?);
         }
     }
@@ -246,7 +249,9 @@ pub(crate) fn quarantine(work: &Path, fingerprint: &str) -> Result<()> {
             continue;
         }
         if !entry.file_type().is_file()
-            || !plan.files.contains_key(relative.to_string_lossy().as_ref())
+            || !plan
+                .files
+                .contains_key(portable_relative(relative)?.as_str())
         {
             return Err(Error::Manifest("unexpected Finder quarantine entry".into()));
         }
@@ -287,15 +292,9 @@ pub(crate) fn quarantine(work: &Path, fingerprint: &str) -> Result<()> {
     }
     let audio_directory = directory.join("audio");
     if audio_directory.exists() {
-        File::open(&audio_directory)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|source| io(&audio_directory, source))?;
+        sync_directory(&audio_directory).map_err(|source| io(&audio_directory, source))?;
     }
-    File::open(&directory)
-        .and_then(|dir| dir.sync_all())
-        .map_err(|source| io(&directory, source))?;
-    File::open(parent)
-        .and_then(|dir| dir.sync_all())
-        .map_err(|source| io(parent, source))?;
+    sync_directory(&directory).map_err(|source| io(&directory, source))?;
+    sync_directory(parent).map_err(|source| io(parent, source))?;
     Ok(())
 }
