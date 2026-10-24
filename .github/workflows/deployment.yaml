@@ -8,11 +8,56 @@ permissions:
 
 concurrency:
   group: deployment-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
+  queue: max
 
 jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Validate release version and destination
+        id: release
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SELECTED_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$SELECTED_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "Deployment must run from the default branch: $DEFAULT_BRANCH" >&2
+            exit 1
+          fi
+
+          version=$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -er '.packages[] | select(.name == "kanade-tts") | .version')
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Cargo package version is not valid SemVer: $version" >&2
+            exit 1
+          fi
+          tag="v$version"
+
+          if gh api "repos/$REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "Release tag already exists and will not be overwritten: $tag" >&2
+            exit 1
+          fi
+          echo "commit=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   package:
     name: Package ${{ matrix.platform }}
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +71,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          ref: ${{ needs.prepare.outputs.commit }}
       - name: Resolve native artifact name
         id: platform
         shell: bash
@@ -60,9 +106,156 @@ jobs:
           tar -tzf "$archive" | grep -Fx "$ARTIFACT_NAME/README.md"
           tar -tzf "$archive" | grep -Fx "$ARTIFACT_NAME/THIRD_PARTY_NOTICES.md"
       - name: Upload package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.platform.outputs.artifact_name }}
           path: dist/${{ steps.platform.outputs.artifact_name }}.tar.gz
           if-no-files-found: error
+          compression-level: 0
           retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      COMMIT_SHA: ${{ needs.prepare.outputs.commit }}
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Download Linux package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kanade-tts-linux-x86_64
+          path: dist
+          digest-mismatch: error
+      - name: Download macOS package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kanade-tts-macos-arm64
+          path: dist
+          digest-mismatch: error
+      - name: Verify packages and generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          linux_archive=kanade-tts-linux-x86_64.tar.gz
+          macos_archive=kanade-tts-macos-arm64.tar.gz
+          printf '%s\n' "$linux_archive" "$macos_archive" \
+            | sort \
+            | diff -u - <(find dist -maxdepth 1 -type f -exec basename {} \; | sort)
+
+          verify_dir=$(mktemp -d)
+          trap 'rm -rf "$verify_dir"' EXIT
+          for archive_name in "$linux_archive" "$macos_archive"; do
+            artifact_name=${archive_name%.tar.gz}
+            archive="dist/$archive_name"
+            printf '%s\n' \
+              "$artifact_name/" \
+              "$artifact_name/README.md" \
+              "$artifact_name/THIRD_PARTY_NOTICES.md" \
+              "$artifact_name/kanade-tts" \
+              | sort \
+              | diff -u - <(tar -tzf "$archive" | sort)
+            tar -xOf "$archive" "$artifact_name/kanade-tts" > "$verify_dir/$artifact_name"
+            test -s "$verify_dir/$artifact_name"
+          done
+
+          file "$verify_dir/kanade-tts-linux-x86_64" | grep -F 'ELF 64-bit LSB' | grep -F 'x86-64'
+          file "$verify_dir/kanade-tts-macos-arm64" | grep -F 'Mach-O 64-bit' | grep -F 'arm64'
+
+          (
+            cd dist
+            sha256sum "$linux_archive" "$macos_archive" > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+      - name: Create release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          existing_release_count=$(
+            gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" \
+              | jq -er --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | length'
+          )
+          if [[ "$existing_release_count" -ne 0 ]]; then
+            echo "Release already exists and will not be overwritten: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release tag appeared during the build: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          gh api --method POST "repos/$REPOSITORY/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" \
+            -f "sha=$COMMIT_SHA" >/dev/null
+          tag_sha=$(gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')
+          test "$tag_sha" = "$COMMIT_SHA"
+      - name: Create and verify draft release
+        id: draft
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release create "$RELEASE_TAG" \
+            dist/kanade-tts-linux-x86_64.tar.gz \
+            dist/kanade-tts-macos-arm64.tar.gz \
+            dist/SHA256SUMS \
+            --repo "$REPOSITORY" \
+            --verify-tag \
+            --target "$COMMIT_SHA" \
+            --title "kanade-tts $RELEASE_TAG" \
+            --generate-notes \
+            --draft
+
+          release_json=$(
+            gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" \
+              | jq -ce --arg tag "$RELEASE_TAG" '
+                  [.[][] | select(.tag_name == $tag)]
+                  | if length == 1 then .[0] else error("expected exactly one draft release") end
+                '
+          )
+          test "$(jq -r '.draft' <<< "$release_json")" = true
+          release_id=$(jq -r '.id' <<< "$release_json")
+          test "$release_id" != null
+
+          expected_assets=$(
+            for asset in \
+              dist/kanade-tts-linux-x86_64.tar.gz \
+              dist/kanade-tts-macos-arm64.tar.gz \
+              dist/SHA256SUMS; do
+              printf '%s %s sha256:%s\n' \
+                "$(basename "$asset")" \
+                "$(stat -c '%s' "$asset")" \
+                "$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            done | sort
+          )
+          actual_assets=$(gh api "repos/$REPOSITORY/releases/$release_id/assets" --paginate \
+            --jq 'sort_by(.name)[] | "\(.name) \(.size) \(.digest)"')
+          test "$actual_assets" = "$expected_assets"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+      - name: Publish and verify release
+        shell: bash
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+
+          gh release edit "$RELEASE_TAG" \
+            --repo "$REPOSITORY" \
+            --draft=false \
+            --latest
+
+          release_json=$(gh api "repos/$REPOSITORY/releases/$RELEASE_ID")
+          test "$(jq -r '.draft' <<< "$release_json")" = false
+          test "$(jq -r '.prerelease' <<< "$release_json")" = false
+          test "$(jq -r '.tag_name' <<< "$release_json")" = "$RELEASE_TAG"
+          tag_sha=$(gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')
+          test "$tag_sha" = "$COMMIT_SHA"
+          test "$(jq '.assets | length' <<< "$release_json")" -eq 3
