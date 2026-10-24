@@ -359,15 +359,14 @@ jobs:
             --generate-notes \
             --draft
 
-          release_json=$(
-            gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" \
-              | jq -ce --arg tag "$RELEASE_TAG" '
-                  [.[][] | select(.tag_name == $tag)]
-                  | if length == 1 then .[0] else error("expected exactly one draft release") end
-                '
-          )
-          test "$(jq -r '.draft' <<< "$release_json")" = true
-          release_id=$(jq -r '.id' <<< "$release_json")
+          release_json=$(gh release view "$RELEASE_TAG" \
+            --repo "$REPOSITORY" \
+            --json databaseId,isDraft,isPrerelease,tagName,targetCommitish)
+          test "$(jq -r '.isDraft' <<< "$release_json")" = true
+          test "$(jq -r '.isPrerelease' <<< "$release_json")" = false
+          test "$(jq -r '.tagName' <<< "$release_json")" = "$RELEASE_TAG"
+          test "$(jq -r '.targetCommitish' <<< "$release_json")" = "$COMMIT_SHA"
+          release_id=$(jq -r '.databaseId' <<< "$release_json")
           test "$release_id" != null
 
           expected_assets=$(
