@@ -1,0 +1,68 @@
+name: Deployment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-24.04
+          - platform: macos
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Resolve native artifact name
+        id: platform
+        shell: bash
+        run: |
+          machine=$(uname -m)
+          case "${RUNNER_OS}:${machine}" in
+            Linux:x86_64) target=linux-x86_64 ;;
+            Linux:aarch64|Linux:arm64) target=linux-arm64 ;;
+            macOS:x86_64) target=macos-x86_64 ;;
+            macOS:arm64) target=macos-arm64 ;;
+            *) echo "Unsupported runner: ${RUNNER_OS} ${machine}" >&2; exit 1 ;;
+          esac
+          echo "artifact_name=kanade-tts-${target}" >> "$GITHUB_OUTPUT"
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Smoke test
+        run: target/release/kanade-tts --help
+      - name: Package and inspect allowlist
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ steps.platform.outputs.artifact_name }}
+        run: |
+          mkdir -p "staging/$ARTIFACT_NAME" dist
+          install -m 0755 target/release/kanade-tts "staging/$ARTIFACT_NAME/kanade-tts"
+          cp README.md THIRD_PARTY_NOTICES.md "staging/$ARTIFACT_NAME/"
+          archive="dist/$ARTIFACT_NAME.tar.gz"
+          tar -czf "$archive" -C staging "$ARTIFACT_NAME"
+          tar -tzf "$archive"
+          test "$(tar -tzf "$archive" | wc -l | tr -d ' ')" -eq 4
+          tar -tzf "$archive" | grep -Fx "$ARTIFACT_NAME/"
+          tar -tzf "$archive" | grep -Fx "$ARTIFACT_NAME/kanade-tts"
+          tar -tzf "$archive" | grep -Fx "$ARTIFACT_NAME/README.md"
+          tar -tzf "$archive" | grep -Fx "$ARTIFACT_NAME/THIRD_PARTY_NOTICES.md"
+      - name: Upload package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.platform.outputs.artifact_name }}
+          path: dist/${{ steps.platform.outputs.artifact_name }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
