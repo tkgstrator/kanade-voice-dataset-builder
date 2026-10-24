@@ -24,8 +24,8 @@ jobs:
       - name: Install audio tools on Ubuntu
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
       - name: Install audio tools on macOS
         if: runner.os == 'macOS'
         run: brew install ffmpeg
