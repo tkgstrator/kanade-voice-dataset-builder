@@ -21,6 +21,17 @@ Extract the archive, then run `./kanade-tts --help` on Linux or macOS, or `.\kan
 
 ## Workflow
 
+### Initial NSP extraction
+
+For this workflow, prepare both `prod.keys` and `title.keys` before extracting your own lawfully obtained retail KANADE NSP into RomFS and ExeFS with a compatible Nintendo Switch content extraction tool:
+
+- `prod.keys` is the retail keyset used to read and decrypt the NSP/NCA content.
+- `title.keys` maps a Rights ID to its title key and is required when the program NCA uses external title-key encryption. Some extractors can import the same title key directly from the NSP ticket, but keeping `title.keys` available avoids depending on tool-specific ticket handling.
+
+`dev.keys` is for development content and is not used for the retail KANADE release. This builder never reads `prod.keys`, `title.keys`, or `dev.keys`; it starts after extraction and consumes only `romfs/data`. ExeFS may be retained as part of a complete extraction, but the dataset-building commands do not use it.
+
+Dump keys only from hardware and content you are authorized to use. Keep all key files, tickets, NSP/NCA files, and extracted game assets local; never commit, upload, paste, or log them. This repository does not provide keys or game content.
+
 Choose a source directory whose children include `voice/`, `scn/`, and the runtime files checked by the KANADE fingerprint configuration. Put outputs outside the source tree. Replace the example paths below with your local paths.
 
 The commands below run from a source checkout. When using a prebuilt archive, replace `cargo run --locked --` with the path to `kanade-tts` or `kanade-tts.exe`; the command names and arguments are identical.
